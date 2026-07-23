@@ -173,6 +173,34 @@
     margin:-8px 0 12px;
   }
 
+  .medida-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:6px 10px;
+    margin-bottom:6px;
+    font-family:'Helvetica Neue', Arial, sans-serif;
+    font-size:12.5px;
+  }
+  .medida-item button{
+    background:none;
+    border:none;
+    color:var(--muted);
+    cursor:pointer;
+    font-size:14px;
+    padding:0 0 0 10px;
+    line-height:1;
+  }
+  .medidas-resumo{
+    font-family:'Helvetica Neue', Arial, sans-serif;
+    font-size:11.5px;
+    color:var(--accent2);
+    margin:-2px 0 10px;
+  }
+
   .orcamento-item{
     padding:9px 0;
     border-bottom:1px dashed var(--line);
@@ -477,6 +505,10 @@
       </div>
     </div>
     <div class="no-print" style="text-align:right; margin:-4px 0 10px;">
+      <button type="button" class="btn" style="font-size:11.5px; padding:4px 10px;" onclick="adicionarMedida()">+ Adicionar esta parede ao ambiente</button>
+    </div>
+    <div id="listaMedidas"></div>
+    <div class="no-print" style="text-align:right; margin:-4px 0 10px;">
       <button type="button" class="btn" style="font-size:11.5px; padding:4px 10px;" onclick="limparAmbienteAtual()">Novo ambiente (limpar nome e medidas)</button>
     </div>
     <div class="field">
@@ -578,6 +610,7 @@
     <h2>Orçamento — <span id="qtdAmbientes">0</span> ambiente(s)</h2>
     <div id="listaOrcamento"></div>
     <div id="resumoPorTipo" style="display:none; padding:10px 0; border-top:1px dashed var(--line); margin-top:4px;"></div>
+    <div id="economiaAproveitamento" class="flag" style="display:none; margin:8px 0;"></div>
     <div class="result-row" style="margin-top:6px;">
       <span class="result-label">Total material</span>
       <span class="result-value" id="totalMaterialGeral">—</span>
@@ -651,6 +684,7 @@ let comPreparo = true;
 
 let orcamento = [];
 let proximoIdOrcamento = 1;
+let medidasAtuais = [];
 
 const STORAGE_KEY = 'lojaAmbienteOrcamento_v1';
 
@@ -970,32 +1004,101 @@ function setPreparo(v){
   calcular();
 }
 
+function adicionarMedida(){
+  const l = parseNum(document.getElementById('largParede').value);
+  const a = parseNum(document.getElementById('altParede').value);
+  if(l <= 0 || a <= 0){
+    alert('Informe largura e altura antes de adicionar esta parede ao ambiente.');
+    return;
+  }
+  medidasAtuais.push({largura: l, altura: a});
+  document.getElementById('largParede').value = '';
+  document.getElementById('altParede').value = '';
+  renderMedidas();
+  calcular();
+}
+
+function removerMedida(idx){
+  medidasAtuais.splice(idx, 1);
+  renderMedidas();
+  calcular();
+}
+
+function renderMedidas(){
+  const el = document.getElementById('listaMedidas');
+  if(medidasAtuais.length === 0){
+    el.innerHTML = '';
+    return;
+  }
+  const areaTotal = medidasAtuais.reduce((s, m) => s + m.largura * m.altura, 0);
+  el.innerHTML = medidasAtuais.map((m, i) =>
+    '<div class="medida-item">' +
+      '<span>' + fmt(m.largura,2) + ' × ' + fmt(m.altura,2) + ' m</span>' +
+      '<button type="button" class="no-print" onclick="removerMedida(' + i + ')" title="Remover">✕</button>' +
+    '</div>'
+  ).join('') +
+  '<div class="medidas-resumo">' + medidasAtuais.length + ' parede(s) adicionada(s) · ' + fmt(areaTotal,2) + ' m² até aqui — informe mais uma parede acima ou finalize o ambiente.</div>';
+}
+
+function medidasEfetivas(){
+  const arr = medidasAtuais.slice();
+  const l = parseNum(document.getElementById('largParede').value);
+  const a = parseNum(document.getElementById('altParede').value);
+  if(l > 0 && a > 0) arr.push({largura: l, altura: a});
+  return arr;
+}
+
+function empacotarRolos(tirasIndividuais, comprimentoRolo){
+  if(tirasIndividuais.length === 0 || comprimentoRolo <= 0) return 0;
+  const tiras = tirasIndividuais.slice().sort((a, b) => b - a);
+  const rolos = [];
+  tiras.forEach(t => {
+    let colocado = false;
+    for(let i = 0; i < rolos.length; i++){
+      if(rolos[i] >= t - 1e-9){
+        rolos[i] -= t;
+        colocado = true;
+        break;
+      }
+    }
+    if(!colocado) rolos.push(comprimentoRolo - t);
+  });
+  return rolos.length;
+}
+
 function computarValores(){
   const tipo = tiposAtuais()[tipoAtualIndex];
   const largBobina = parseNum(document.getElementById('largBobina').value);
   const preco = parseNum(document.getElementById('preco').value);
-  const largParede = parseNum(document.getElementById('largParede').value);
-  const altParede = parseNum(document.getElementById('altParede').value);
   const perda = estampado ? parseNum(document.getElementById('perda').value) : 0;
   const desconto = parseNum(document.getElementById('desconto').value);
 
-  const area = largParede * altParede;
+  const medidas = medidasEfetivas();
+  const area = medidas.reduce((s, m) => s + m.largura * m.altura, 0);
 
   let custoMaterial = 0;
   let metrosLineares = 0;
   let tiras = 0;
   let areaComprar = 0;
   let rolosComprar = 0;
+  let tirasIndividuais = [];
+  let alturaTiraMaxima = 0;
 
   if(tipo.porRolo){
-    if(largBobina > 0 && largParede > 0 && altParede > 0){
-      tiras = Math.ceil(largParede / largBobina);
-      const alturaTira = altParede * (1 + perda/100);
-      metrosLineares = tiras * alturaTira;
+    if(largBobina > 0 && medidas.length > 0){
+      medidas.forEach(m => {
+        if(m.largura > 0 && m.altura > 0){
+          const tirasMedida = Math.ceil(m.largura / largBobina);
+          const alturaTira = m.altura * (1 + perda/100);
+          alturaTiraMaxima = Math.max(alturaTiraMaxima, alturaTira);
+          tiras += tirasMedida;
+          metrosLineares += tirasMedida * alturaTira;
+          for(let i = 0; i < tirasMedida; i++) tirasIndividuais.push(alturaTira);
+        }
+      });
       if(tipo.coberturaRolo){
         const comprimentoRolo = tipo.coberturaRolo / largBobina;
-        const tirasPorRolo = Math.max(1, Math.floor(comprimentoRolo / alturaTira));
-        rolosComprar = Math.ceil(tiras / tirasPorRolo);
+        rolosComprar = empacotarRolos(tirasIndividuais, comprimentoRolo);
         if(preco > 0) custoMaterial = rolosComprar * preco;
       } else {
         if(preco > 0) custoMaterial = metrosLineares * preco;
@@ -1010,6 +1113,7 @@ function computarValores(){
 
   let custoCola = 0;
   let colaInfo = null;
+  let colaRaw = null;
 
   if(tipo.cola !== 'nenhuma'){
     const d = colas[tipo.cola];
@@ -1021,6 +1125,7 @@ function computarValores(){
         const qtdCompra = Math.ceil(base / rend);
         colaInfo = {qtd: qtdCompra, unidade: qtdCompra === 1 ? d.unidade : d.unidadePlural};
         if(precoCola > 0) custoCola = qtdCompra * precoCola;
+        colaRaw = {colaChave: tipo.cola, base, rendimento: rend, preco: precoCola};
       }
     }
   }
@@ -1069,8 +1174,8 @@ function computarValores(){
   if(area > 0 && preco <= 0){
     avisos.push('Informe o valor do revestimento — o material ainda não entra na conta.');
   }
-  if(tipo.coberturaRolo && largBobina > 0 && altParede > 0 && altParede * (1 + perda/100) > (tipo.coberturaRolo / largBobina)){
-    avisos.push('A altura da parede (com sobra) é maior que o comprimento do rolo — não é possível cortar uma tira inteira de um único rolo.');
+  if(tipo.coberturaRolo && largBobina > 0 && alturaTiraMaxima > (tipo.coberturaRolo / largBobina)){
+    avisos.push('A altura de uma das paredes (com sobra) é maior que o comprimento do rolo — não é possível cortar uma tira inteira de um único rolo.');
   }
   if(area > 0 && tipo.cola !== 'nenhuma' && custoCola === 0){
     avisos.push('Cola sem preço/rendimento definido — o custo da cola não está incluso no total.');
@@ -1080,9 +1185,9 @@ function computarValores(){
   }
 
   return {
-    tipo, largBobina, preco, largParede, altParede, perda, desconto,
-    area, tiras, metrosLineares, areaComprar, rolosComprar,
-    custoMaterial, custoCola, colaInfo,
+    tipo, largBobina, preco, medidas, perda, desconto,
+    area, tiras, metrosLineares, areaComprar, rolosComprar, tirasIndividuais,
+    custoMaterial, custoCola, colaInfo, colaRaw,
     custoInstalacao, instalacaoInfo,
     totalParcelado, totalAvista, avisos
   };
@@ -1099,7 +1204,7 @@ function calcular(){
     const blocoRolosComprar = document.getElementById('blocoRolosComprar');
     const rMetros = document.getElementById('rMetros');
     const rRolosComprar = document.getElementById('rRolosComprar');
-    if(v.largBobina > 0 && v.largParede > 0 && v.altParede > 0){
+    if(v.largBobina > 0 && v.medidas.length > 0){
       document.getElementById('rTiras').textContent = v.tiras;
       rMetros.innerHTML = fmt(v.metrosLineares,2) + '<span class="unit">m</span>';
     } else {
@@ -1160,6 +1265,8 @@ function limparAmbienteAtual(){
   document.getElementById('nomeAmbiente').value = '';
   document.getElementById('largParede').value = '';
   document.getElementById('altParede').value = '';
+  medidasAtuais = [];
+  renderMedidas();
   calcular();
 }
 
@@ -1187,21 +1294,25 @@ function adicionarAoOrcamento(){
     categoria: categoriaAtual,
     tipoIndex: tipoAtualIndex,
     tipoNome: v.tipo.nome,
-    largura: v.largParede,
-    altura: v.altParede,
+    medidas: v.medidas,
     estampado: estampado,
     perda: v.perda,
     preco: v.preco,
     largBobina: v.largBobina,
+    coberturaRolo: v.tipo.coberturaRolo || 0,
+    tirasIndividuais: v.tirasIndividuais,
     area: v.area,
     custoMaterial: v.custoMaterial,
     custoCola: v.custoCola,
+    colaRaw: v.colaRaw,
     custoInstalacao: v.custoInstalacao,
     desconto: v.desconto,
     totalParcelado: v.totalParcelado,
     totalAvista: v.totalAvista
   });
 
+  medidasAtuais = [];
+  renderMedidas();
   nomeInput.value = '';
   nomeInput.placeholder = 'Ambiente ' + (orcamento.length + 1);
 
@@ -1214,8 +1325,22 @@ function carregarItemNoFormulario(item){
   trocarCategoria(item.categoria);
   selecionarTipo(item.tipoIndex || 0);
   document.getElementById('nomeAmbiente').value = item.nome;
-  document.getElementById('largParede').value = item.largura;
-  document.getElementById('altParede').value = item.altura;
+  const medidas = item.medidas && item.medidas.length ? item.medidas.slice() : [];
+  if(medidas.length > 1){
+    medidasAtuais = medidas.slice(0, -1);
+    const ultima = medidas[medidas.length - 1];
+    document.getElementById('largParede').value = ultima.largura;
+    document.getElementById('altParede').value = ultima.altura;
+  } else if(medidas.length === 1){
+    medidasAtuais = [];
+    document.getElementById('largParede').value = medidas[0].largura;
+    document.getElementById('altParede').value = medidas[0].altura;
+  } else {
+    medidasAtuais = [];
+    document.getElementById('largParede').value = '';
+    document.getElementById('altParede').value = '';
+  }
+  renderMedidas();
   setEstampado(item.estampado !== false);
   if(document.getElementById('perda')) document.getElementById('perda').value = item.perda;
   if(document.getElementById('desconto')) document.getElementById('desconto').value = item.desconto || 0;
@@ -1246,6 +1371,79 @@ function removerItemOrcamento(id){
   orcamento = orcamento.filter(item => item.id !== id);
   renderOrcamento();
   salvarEstado();
+}
+
+function recalcularAgregados(){
+  const gruposMaterial = {};
+  const itensSemAgregacaoMaterial = [];
+
+  orcamento.forEach(item => {
+    if(item.coberturaRolo > 0 && item.largBobina > 0 && item.tirasIndividuais && item.tirasIndividuais.length){
+      const chave = item.tipoNome + '|' + item.largBobina + '|' + item.preco;
+      if(!gruposMaterial[chave]){
+        gruposMaterial[chave] = {tiras: [], preco: item.preco, largBobina: item.largBobina, coberturaRolo: item.coberturaRolo, itens: []};
+      }
+      gruposMaterial[chave].tiras = gruposMaterial[chave].tiras.concat(item.tirasIndividuais);
+      gruposMaterial[chave].itens.push(item);
+    } else {
+      itensSemAgregacaoMaterial.push(item);
+    }
+  });
+
+  let totalMaterialParcelado = 0;
+  let totalMaterialAvista = 0;
+
+  Object.values(gruposMaterial).forEach(g => {
+    const comprimentoRolo = g.coberturaRolo / g.largBobina;
+    const rolosTotais = empacotarRolos(g.tiras, comprimentoRolo);
+    const custoTotalGrupo = rolosTotais * g.preco;
+    const totalTirasGrupo = g.tiras.length;
+    totalMaterialParcelado += custoTotalGrupo;
+    g.itens.forEach(item => {
+      const share = totalTirasGrupo > 0 ? (item.tirasIndividuais.length / totalTirasGrupo) : 0;
+      const custoAlocado = custoTotalGrupo * share;
+      totalMaterialAvista += custoAlocado * (1 - (item.desconto || 0) / 100);
+    });
+  });
+
+  itensSemAgregacaoMaterial.forEach(item => {
+    totalMaterialParcelado += item.custoMaterial;
+    totalMaterialAvista += item.custoMaterial * (1 - (item.desconto || 0) / 100);
+  });
+
+  const gruposCola = {};
+  orcamento.forEach(item => {
+    if(item.colaRaw && item.colaRaw.rendimento > 0){
+      const chave = item.colaRaw.colaChave + '|' + item.colaRaw.rendimento + '|' + item.colaRaw.preco;
+      if(!gruposCola[chave]){
+        gruposCola[chave] = {baseTotal: 0, rendimento: item.colaRaw.rendimento, preco: item.colaRaw.preco};
+      }
+      gruposCola[chave].baseTotal += item.colaRaw.base;
+    }
+  });
+
+  let totalColaGeral = 0;
+  Object.values(gruposCola).forEach(g => {
+    const qtd = Math.ceil(g.baseTotal / g.rendimento);
+    totalColaGeral += qtd * g.preco;
+  });
+
+  const totalInstalacaoGeral = orcamento.reduce((s, i) => s + i.custoInstalacao, 0);
+
+  const totalParceladoGeral = totalMaterialParcelado + totalColaGeral + totalInstalacaoGeral;
+  const totalAvistaGeral = totalMaterialAvista + totalColaGeral + totalInstalacaoGeral;
+
+  const somaIngenuaParcelado = orcamento.reduce((s, i) => s + i.totalParcelado, 0);
+  const economia = somaIngenuaParcelado - totalParceladoGeral;
+
+  return {
+    totalMaterialGeral: totalMaterialParcelado,
+    totalColaGeral,
+    totalInstalacaoGeral,
+    totalParceladoGeral,
+    totalAvistaGeral,
+    economia
+  };
 }
 
 function renderOrcamento(){
@@ -1312,17 +1510,27 @@ function renderOrcamento(){
     resumoEl.innerHTML = '';
   }
 
-  const totalMaterialGeral = orcamento.reduce((s, i) => s + i.custoMaterial, 0);
-  const totalColaGeral = orcamento.reduce((s, i) => s + i.custoCola, 0);
-  const totalInstalacaoGeral = orcamento.reduce((s, i) => s + i.custoInstalacao, 0);
-  const totalParceladoGeral = orcamento.reduce((s, i) => s + i.totalParcelado, 0);
-  const totalAvistaGeral = orcamento.reduce((s, i) => s + i.totalAvista, 0);
+  const agregados = recalcularAgregados();
+  const totalMaterialGeral = agregados.totalMaterialGeral;
+  const totalColaGeral = agregados.totalColaGeral;
+  const totalInstalacaoGeral = agregados.totalInstalacaoGeral;
+  const totalParceladoGeral = agregados.totalParceladoGeral;
+  const totalAvistaGeral = agregados.totalAvistaGeral;
 
   document.getElementById('totalMaterialGeral').textContent = fmtBRL(totalMaterialGeral);
   document.getElementById('totalColaGeral').textContent = fmtBRL(totalColaGeral);
   document.getElementById('totalInstalacaoGeral').textContent = fmtBRL(totalInstalacaoGeral);
   document.getElementById('totalGeralParcelado').textContent = fmtBRL(totalParceladoGeral);
   document.getElementById('totalGeralAvista').textContent = fmtBRL(totalAvistaGeral);
+
+  const economiaEl = document.getElementById('economiaAproveitamento');
+  if(agregados.economia > 0.01){
+    economiaEl.style.display = 'block';
+    economiaEl.innerHTML = '💡 Aproveitamento de material e cola entre os ambientes deste orçamento: economia de <strong>' + fmtBRL(agregados.economia) + '</strong> em relação ao cálculo item por item.';
+  } else {
+    economiaEl.style.display = 'none';
+    economiaEl.innerHTML = '';
+  }
 
   document.getElementById('sidebarQtdAmbientes').textContent = orcamento.length;
   document.getElementById('sidebarTotalAvista').textContent = fmtBRL(totalAvistaGeral);
@@ -1437,11 +1645,12 @@ function gerarPDF(){
   doc.line(margin, y, pageWidth - margin, y);
   y += 8;
 
-  const totalMaterialGeral = orcamento.reduce((s, i) => s + i.custoMaterial, 0);
-  const totalColaGeral = orcamento.reduce((s, i) => s + i.custoCola, 0);
-  const totalInstalacaoGeral = orcamento.reduce((s, i) => s + i.custoInstalacao, 0);
-  const totalParceladoGeral = orcamento.reduce((s, i) => s + i.totalParcelado, 0);
-  const totalAvistaGeral = orcamento.reduce((s, i) => s + i.totalAvista, 0);
+  const agregadosPdf = recalcularAgregados();
+  const totalMaterialGeral = agregadosPdf.totalMaterialGeral;
+  const totalColaGeral = agregadosPdf.totalColaGeral;
+  const totalInstalacaoGeral = agregadosPdf.totalInstalacaoGeral;
+  const totalParceladoGeral = agregadosPdf.totalParceladoGeral;
+  const totalAvistaGeral = agregadosPdf.totalAvistaGeral;
 
   novaLinhaSeNecessario();
   doc.setFontSize(10);
@@ -1449,6 +1658,15 @@ function gerarPDF(){
   doc.text('Total cola: ' + fmtBRL(totalColaGeral), pageWidth - margin, y, {align:'right'}); y += 6;
   doc.text('Total instalação: ' + fmtBRL(totalInstalacaoGeral), pageWidth - margin, y, {align:'right'}); y += 6;
   doc.text('Total parcelado geral: ' + fmtBRL(totalParceladoGeral), pageWidth - margin, y, {align:'right'}); y += 9;
+
+  if(agregadosPdf.economia > 0.01){
+    novaLinhaSeNecessario();
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Valores de material e cola otimizados considerando o orçamento completo (economia de ' + fmtBRL(agregadosPdf.economia) + ').', pageWidth - margin, y, {align:'right'});
+    doc.setTextColor(0, 0, 0);
+    y += 8;
+  }
 
   novaLinhaSeNecessario();
   doc.setFont('helvetica', 'bold');
