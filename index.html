@@ -520,7 +520,11 @@
       </div>
       <div class="result-row">
         <span class="result-label">Metros lineares (com sobra)</span>
-        <span class="result-value big" id="rMetros">—<span class="unit">m</span></span>
+        <span class="result-value" id="rMetros">—<span class="unit">m</span></span>
+      </div>
+      <div class="result-row" id="blocoRolosComprar" style="display:none;">
+        <span class="result-label">Rolos a comprar</span>
+        <span class="result-value big" id="rRolosComprar">—<span class="unit">rolo(s)</span></span>
       </div>
     </div>
     <div id="blocoArea" style="display:none;">
@@ -616,7 +620,7 @@ let categorias = {
     labelMaterial: 'Material',
     tipos: [
       {nome:'Tecido', largura:1.40, porRolo:true, cola:'tenaz', instalacao:null},
-      {nome:'Papel', largura:0.53, porRolo:true, cola:'po',
+      {nome:'Papel', largura:0.53, porRolo:true, cola:'po', coberturaRolo:10,
         instalacao:{instalador:'Diogo', tipo:'rolo', cobertura:10, preco:220.00}},
       {nome:'Adesivo', largura:1.20, porRolo:true, cola:'nenhuma', instalacao:null}
     ]
@@ -728,9 +732,9 @@ function aplicarTipoAtual(){
   const t = tiposAtuais()[tipoAtualIndex];
   document.getElementById('campoLargBobina').style.display = t.porRolo ? 'block' : 'none';
   if(t.porRolo) document.getElementById('largBobina').value = t.largura;
-  document.getElementById('labelPreco').textContent = t.porRolo
-    ? 'Valor do metro do revestimento (R$)'
-    : 'Valor do m² do revestimento (R$)';
+  document.getElementById('labelPreco').textContent = t.coberturaRolo
+    ? 'Valor do rolo (R$)'
+    : (t.porRolo ? 'Valor do metro do revestimento (R$)' : 'Valor do m² do revestimento (R$)');
   document.getElementById('preco').value = t.precoPadrao !== undefined ? t.precoPadrao : '';
 }
 
@@ -923,6 +927,12 @@ function renderInstalacao(){
   }
   document.getElementById('instalacaoResultSection').style.display = 'block';
 
+  const deslocamentoHtml =
+    '<div class="row" style="margin-top:10px;">' +
+      '<div class="field"><label for="instDeslocamento">Taxa de deslocamento (R$)</label>' +
+        '<input type="number" id="instDeslocamento" value="0.00" step="0.01" min="0"></div>' +
+    '</div>';
+
   if(inst.tipo === 'rolo'){
     campo.innerHTML =
       '<div class="hint">Instalador: <strong>' + inst.instalador + '</strong></div>' +
@@ -931,7 +941,7 @@ function renderInstalacao(){
           '<input type="number" id="instCobertura" value="' + inst.cobertura + '" step="0.1" min="0"></div>' +
         '<div class="field"><label for="instPreco">Preço por rolo (R$)</label>' +
           '<input type="number" id="instPreco" value="' + inst.preco.toFixed(2) + '" step="0.01" min="0"></div>' +
-      '</div>';
+      '</div>' + deslocamentoHtml;
   } else if(inst.tipo === 'area_preparo'){
     campo.innerHTML =
       '<div class="hint">Instalador: <strong>' + inst.instalador + '</strong></div>' +
@@ -947,7 +957,7 @@ function renderInstalacao(){
           '<input type="number" id="instPrecoSemPreparo" value="' + inst.precoSemPreparo.toFixed(2) + '" step="0.01" min="0"></div>' +
         '<div class="field"><label for="instPrecoComPreparo">Preço com preparo (R$/m²)</label>' +
           '<input type="number" id="instPrecoComPreparo" value="' + inst.precoComPreparo.toFixed(2) + '" step="0.01" min="0"></div>' +
-      '</div>';
+      '</div>' + deslocamentoHtml;
   }
 
   campo.querySelectorAll('input').forEach(el => el.addEventListener('input', calcular));
@@ -975,12 +985,21 @@ function computarValores(){
   let metrosLineares = 0;
   let tiras = 0;
   let areaComprar = 0;
+  let rolosComprar = 0;
 
   if(tipo.porRolo){
     if(largBobina > 0 && largParede > 0 && altParede > 0){
       tiras = Math.ceil(largParede / largBobina);
-      metrosLineares = tiras * altParede * (1 + perda/100);
-      if(preco > 0) custoMaterial = metrosLineares * preco;
+      const alturaTira = altParede * (1 + perda/100);
+      metrosLineares = tiras * alturaTira;
+      if(tipo.coberturaRolo){
+        const comprimentoRolo = tipo.coberturaRolo / largBobina;
+        const tirasPorRolo = Math.max(1, Math.floor(comprimentoRolo / alturaTira));
+        rolosComprar = Math.ceil(tiras / tirasPorRolo);
+        if(preco > 0) custoMaterial = rolosComprar * preco;
+      } else {
+        if(preco > 0) custoMaterial = metrosLineares * preco;
+      }
     }
   } else {
     if(area > 0){
@@ -1034,12 +1053,24 @@ function computarValores(){
     };
   }
 
+  if(tipo.instalacao && instalacaoInfo){
+    const deslocamento = parseNum(document.getElementById('instDeslocamento') ? document.getElementById('instDeslocamento').value : 0);
+    if(deslocamento > 0){
+      custoInstalacao += deslocamento;
+      instalacaoInfo.texto += ' + deslocamento';
+      instalacaoInfo.hasCusto = true;
+    }
+  }
+
   const totalParcelado = custoMaterial + custoCola + custoInstalacao;
   const totalAvista = (custoMaterial * (1 - desconto/100)) + custoCola + custoInstalacao;
 
   const avisos = [];
   if(area > 0 && preco <= 0){
     avisos.push('Informe o valor do revestimento — o material ainda não entra na conta.');
+  }
+  if(tipo.coberturaRolo && largBobina > 0 && altParede > 0 && altParede * (1 + perda/100) > (tipo.coberturaRolo / largBobina)){
+    avisos.push('A altura da parede (com sobra) é maior que o comprimento do rolo — não é possível cortar uma tira inteira de um único rolo.');
   }
   if(area > 0 && tipo.cola !== 'nenhuma' && custoCola === 0){
     avisos.push('Cola sem preço/rendimento definido — o custo da cola não está incluso no total.');
@@ -1050,7 +1081,7 @@ function computarValores(){
 
   return {
     tipo, largBobina, preco, largParede, altParede, perda, desconto,
-    area, tiras, metrosLineares, areaComprar,
+    area, tiras, metrosLineares, areaComprar, rolosComprar,
     custoMaterial, custoCola, colaInfo,
     custoInstalacao, instalacaoInfo,
     totalParcelado, totalAvista, avisos
@@ -1065,12 +1096,24 @@ function calcular(){
   if(v.tipo.porRolo){
     document.getElementById('blocoRolo').style.display = 'block';
     document.getElementById('blocoArea').style.display = 'none';
+    const blocoRolosComprar = document.getElementById('blocoRolosComprar');
+    const rMetros = document.getElementById('rMetros');
+    const rRolosComprar = document.getElementById('rRolosComprar');
     if(v.largBobina > 0 && v.largParede > 0 && v.altParede > 0){
       document.getElementById('rTiras').textContent = v.tiras;
-      document.getElementById('rMetros').innerHTML = fmt(v.metrosLineares,2) + '<span class="unit">m</span>';
+      rMetros.innerHTML = fmt(v.metrosLineares,2) + '<span class="unit">m</span>';
     } else {
       document.getElementById('rTiras').textContent = '—';
-      document.getElementById('rMetros').innerHTML = '—<span class="unit">m</span>';
+      rMetros.innerHTML = '—<span class="unit">m</span>';
+    }
+    if(v.tipo.coberturaRolo){
+      blocoRolosComprar.style.display = 'flex';
+      rRolosComprar.innerHTML = v.rolosComprar > 0 ? v.rolosComprar + '<span class="unit"> rolo(s)</span>' : '—<span class="unit"> rolo(s)</span>';
+      rMetros.classList.remove('big');
+      rRolosComprar.classList.add('big');
+    } else {
+      blocoRolosComprar.style.display = 'none';
+      rMetros.classList.add('big');
     }
   } else {
     document.getElementById('blocoRolo').style.display = 'none';
