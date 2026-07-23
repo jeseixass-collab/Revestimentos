@@ -483,6 +483,10 @@
       <input type="number" id="largBobina" step="0.01" min="0.1">
     </div>
     <div class="field">
+      <label for="colecaoMaterial">Coleção / código do material</label>
+      <input type="text" id="colecaoMaterial" placeholder="Ex: 7865, Coleção Aroma Caramelo">
+    </div>
+    <div class="field">
       <label for="preco" id="labelPreco">Valor do metro do revestimento (R$)</label>
       <input type="number" id="preco" placeholder="opcional" step="0.01" min="0">
     </div>
@@ -770,6 +774,7 @@ function aplicarTipoAtual(){
     ? 'Valor do rolo (R$)'
     : (t.porRolo ? 'Valor do metro do revestimento (R$)' : 'Valor do m² do revestimento (R$)');
   document.getElementById('preco').value = t.precoPadrao !== undefined ? t.precoPadrao : '';
+  document.getElementById('colecaoMaterial').value = '';
 }
 
 function renderTipos(){
@@ -1070,6 +1075,7 @@ function computarValores(){
   const tipo = tiposAtuais()[tipoAtualIndex];
   const largBobina = parseNum(document.getElementById('largBobina').value);
   const preco = parseNum(document.getElementById('preco').value);
+  const colecao = document.getElementById('colecaoMaterial') ? document.getElementById('colecaoMaterial').value.trim() : '';
   const perda = estampado ? parseNum(document.getElementById('perda').value) : 0;
   const desconto = parseNum(document.getElementById('desconto').value);
 
@@ -1185,7 +1191,7 @@ function computarValores(){
   }
 
   return {
-    tipo, largBobina, preco, medidas, perda, desconto,
+    tipo, largBobina, preco, colecao, medidas, perda, desconto,
     area, tiras, metrosLineares, areaComprar, rolosComprar, tirasIndividuais,
     custoMaterial, custoCola, colaInfo, colaRaw,
     custoInstalacao, instalacaoInfo,
@@ -1294,6 +1300,7 @@ function adicionarAoOrcamento(){
     categoria: categoriaAtual,
     tipoIndex: tipoAtualIndex,
     tipoNome: v.tipo.nome,
+    colecao: v.colecao,
     medidas: v.medidas,
     estampado: estampado,
     perda: v.perda,
@@ -1346,6 +1353,7 @@ function carregarItemNoFormulario(item){
   if(document.getElementById('desconto')) document.getElementById('desconto').value = item.desconto || 0;
   if(document.getElementById('preco') && item.preco > 0) document.getElementById('preco').value = item.preco;
   if(document.getElementById('largBobina') && item.largBobina > 0) document.getElementById('largBobina').value = item.largBobina;
+  if(document.getElementById('colecaoMaterial')) document.getElementById('colecaoMaterial').value = item.colecao || '';
   calcular();
   const nomeInput = document.getElementById('nomeAmbiente');
   if(nomeInput.scrollIntoView) nomeInput.scrollIntoView({behavior:'smooth', block:'center'});
@@ -1472,7 +1480,7 @@ function renderOrcamento(){
       '<div class="orcamento-item-main">' +
         '<div>' +
           '<div class="orcamento-item-nome">' + item.nome + '</div>' +
-          '<div class="hint">' + item.tipoNome + ' · ' + fmt(item.area,2) + ' m²</div>' +
+          '<div class="hint">' + item.tipoNome + (item.colecao ? ' · ' + item.colecao : '') + ' · ' + fmt(item.area,2) + ' m²</div>' +
         '</div>' +
         '<div class="orcamento-item-valores">' +
           '<div class="result-value">' + fmtBRL(item.totalAvista) + '</div>' +
@@ -1633,7 +1641,8 @@ function gerarPDF(){
   orcamento.forEach(item => {
     novaLinhaSeNecessario();
     doc.text(String(item.nome).substring(0, 22), colAmbiente, y);
-    doc.text(String(item.tipoNome).substring(0, 20), colTipo, y);
+    const tipoTexto = item.colecao ? item.tipoNome + ' (' + item.colecao + ')' : item.tipoNome;
+    doc.text(String(tipoTexto).substring(0, 26), colTipo, y);
     doc.text(fmt(item.area, 2) + ' m²', colArea, y);
     doc.text(fmtBRL(item.custoMaterial), colMaterial, y);
     doc.text(fmtBRL(item.custoCola + item.custoInstalacao), colColaInst, y);
